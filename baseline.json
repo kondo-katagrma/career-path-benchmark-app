@@ -1,0 +1,160 @@
+{
+    "generatedAt":  "2026-08-18",
+    "lawCount":  17,
+    "peopleCount":  771,
+    "quant":  {
+                  "noRolePct":  {
+                                    "median":  65.4,
+                                    "min":  0,
+                                    "mean":  55.3,
+                                    "max":  80
+                                },
+                  "satPos":  {
+                                 "median":  94.8,
+                                 "min":  79.1,
+                                 "mean":  93.7,
+                                 "max":  100
+                             },
+                  "tenAvg":  {
+                                 "median":  7.7,
+                                 "min":  2.33,
+                                 "mean":  7.2,
+                                 "max":  10.3
+                             },
+                  "expAvg":  {
+                                 "median":  11.1,
+                                 "min":  7.46,
+                                 "mean":  10.8,
+                                 "max":  14.39
+                             },
+                  "nonPct":  {
+                                 "median":  41.7,
+                                 "min":  0,
+                                 "mean":  44.4,
+                                 "max":  100
+                             },
+                  "chutoPct":  {
+                                   "median":  49.1,
+                                   "min":  12.5,
+                                   "mean":  48.6,
+                                   "max":  78.2
+                               },
+                  "ctrPct":  {
+                                 "median":  0,
+                                 "min":  0,
+                                 "mean":  4.1,
+                                 "max":  45.5
+                             },
+                  "regPct":  {
+                                 "median":  58.3,
+                                 "min":  0,
+                                 "mean":  51.5,
+                                 "max":  100
+                             },
+                  "devPct":  {
+                                 "median":  22.2,
+                                 "min":  0,
+                                 "mean":  19.7,
+                                 "max":  40
+                             }
+              },
+    "qual":  [
+                 {
+                     "label":  "専門性を高めたい・スペシャリストを目指したい",
+                     "baseN":  595,
+                     "basePct":  13.9,
+                     "regex":  "スペシャリスト|専門(性|家|リーダー)|極め|発達|食育|療育|資格",
+                     "key":  "spec_goal",
+                     "field":  "g",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "管理職・マネジメントを目指したい",
+                     "baseN":  595,
+                     "basePct":  11.8,
+                     "regex":  "マネジメント|主任|園長|管理|まとめ|リーダーに|運営|統括",
+                     "key":  "mgr_goal",
+                     "field":  "g",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "自分の役割・職務をより明確にしたい",
+                     "baseN":  739,
+                     "basePct":  7.3,
+                     "regex":  "役割|何を(すれ|し)|どこまで|範囲|曖昧|明確で(は)?な|立場",
+                     "key":  "role_clear",
+                     "field":  "k",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "業務の進め方・見える化を工夫したい",
+                     "baseN":  739,
+                     "basePct":  10.6,
+                     "regex":  "時間(が|の)|効率|余裕|忙|事務|見える化|段取",
+                     "key":  "efficiency",
+                     "field":  "k",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "自ら学び成長したい（前向きさ）",
+                     "baseN":  739,
+                     "basePct":  17.2,
+                     "regex":  "自分(の|が|に)|スキル|学び|勉強|自信|経験(を|が)",
+                     "key":  "self_growth",
+                     "field":  "k",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "上司と一緒にキャリアを考えたい",
+                     "baseN":  284,
+                     "basePct":  0.4,
+                     "regex":  "面談|1on1|話す(機会|時間)|一緒に考え|相談(できる|する機会|の場)",
+                     "key":  "dialog_req",
+                     "field":  "req",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "評価への言及",
+                     "baseN":  284,
+                     "basePct":  2.8,
+                     "regex":  "評価|フィードバック|認め(て|られ)",
+                     "key":  "eval_req",
+                     "field":  "req",
+                     "seg":  null
+                 },
+                 {
+                     "label":  "ミドル層:やりがいが育成・他者に向く",
+                     "baseN":  153,
+                     "basePct":  26.1,
+                     "regex":  "後輩|育成|指導|職員(の|を)|仲間|チーム|相談(に|され|を受)|まとめ|フォロー|全体を(見|把握)",
+                     "key":  "mid_yarigai_ikusei",
+                     "field":  "y",
+                     "seg":  [
+                                 "ミドル"
+                             ]
+                 },
+                 {
+                     "label":  "主任層:やりがいが育成・他者に向く",
+                     "baseN":  37,
+                     "basePct":  29.7,
+                     "regex":  "後輩|育成|指導|職員(の|を)|仲間|チーム|相談(に|され|を受)|まとめ|フォロー|全体を(見|把握)",
+                     "key":  "chief_yarigai_ikusei",
+                     "field":  "y",
+                     "seg":  [
+                                 "主任"
+                             ]
+                 },
+                 {
+                     "label":  "主任・ミドル:育成の進め方を考えている",
+                     "baseN":  189,
+                     "basePct":  35.4,
+                     "regex":  "後輩|育成|指導|伝え方|伝わら|任せ|どう伝え",
+                     "key":  "chiefmid_ikusei_kadai",
+                     "field":  "k",
+                     "seg":  [
+                                 "主任",
+                                 "ミドル"
+                             ]
+                 }
+             ]
+}

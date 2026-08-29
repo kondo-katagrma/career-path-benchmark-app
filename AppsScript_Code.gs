@@ -1,0 +1,402 @@
+/**
+ * キャリアパス アンケート傾向ベンチマーク — データ取得用 Web アプリ（Apps Script）
+ *
+ * 役割：
+ *  1) スプレッドシートIDを受け取り、回答シートを自動検出して「集計値だけ」を返す（貴法人側）。
+ *  2) マスターフォルダ配下の全法人フォルダを走査し、ベースライン（他法人の集計値）を
+ *     算出してキャッシュする（全法人側）。マスターフォルダに新しい法人が増えるたびに
+ *     自動で反映される（毎日1回の自動更新トリガー、または手動再計算）。
+ *
+ * 氏名などの個人情報（PII）は集計に使うだけで、外部（ブラウザ）には一切返さない。
+ *
+ * 使い方：カタグルマのGoogleアカウントでこのスクリプトを Web アプリとしてデプロイし、
+ *         発行された URL を index.html の WEBAPP_URL に設定する（手順は DEPLOY.md）。
+ *         初回のみエディタから setupBaseline() を1回実行して、キャッシュ作成と
+ *         毎日自動更新トリガーの設定を行う（Driveへのアクセス許可を求められたら許可する）。
+ */
+
+// 権限承認トリガー用。関数一覧の一番上に出るよう、あえてここに置いている（エディタから一度だけ実行する）。
+function AAA_runThisToAuthorize(){
+  var t=extractDeckText('1EK8tdqz8hkVUZAIq8JxwrfE6gKQuMDY6');
+  Logger.log('OK: '+t.length+'文字読み込めました');
+}
+
+// ==== 設定 ====
+// マスターフォルダ（法人ごとのサブフォルダが並ぶ、案件が随時増えていくフォルダ）
+var MASTER_FOLDER_ID = '1XsLinjqF1Ht4H1wRoJGSyWMaf3mh0OR-';
+// ベースラインから常に除外したい法人名の部分一致（進行中で回答が固まっていない案件など。カンマ区切り）
+// スクリプトプロパティ BASELINE_EXCLUDE_NAMES で上書き可能（例: "バルツァ,芦屋"）
+var DEFAULT_EXCLUDE_NAMES = ['バルツァ','芦屋'];
+var MIN_N = 5; // この人数未満の法人はベースラインから除外
+var BASELINE_CACHE_KEY = 'BASELINE_CACHE_V1';
+var BASELINE_CACHE_AT_KEY = 'BASELINE_CACHE_AT_V1';
+// 法人ごとの集計値（自己除外の都度計算をDriveスキャンなしで一瞬で行うためのキャッシュ）。
+// スクリプトプロパティ1件あたり9KBの上限があるため、必要ならチャンク分割して保存する。
+var FIRM_RECORDS_CHUNK_PREFIX = 'FIRM_RECORDS_V1_';
+var FIRM_RECORDS_COUNT_KEY = 'FIRM_RECORDS_V1_COUNT';
+var CHUNK_SIZE = 8000;
+
+// ==== 質的テーマ（index.html の baseline と同一定義） ====
+var THEMES = [
+ {key:'spec_goal',label:'専門性を高めたい・スペシャリストを目指したい',field:'g',seg:null,re:'スペシャリスト|専門(性|家|リーダー)|極め|発達|食育|療育|資格'},
+ {key:'mgr_goal',label:'管理職・マネジメントを目指したい',field:'g',seg:null,re:'マネジメント|主任|園長|管理|まとめ|リーダーに|運営|統括'},
+ {key:'role_clear',label:'自分の役割・職務をより明確にしたい',field:'k',seg:null,re:'役割|何を(すれ|し)|どこまで|範囲|曖昧|明確で(は)?な|立場'},
+ {key:'efficiency',label:'業務の進め方・見える化を工夫したい',field:'k',seg:null,re:'時間(が|の)|効率|余裕|忙|事務|見える化|段取'},
+ {key:'self_growth',label:'自ら学び成長したい（前向きさ）',field:'k',seg:null,re:'自分(の|が|に)|スキル|学び|勉強|自信|経験(を|が)'},
+ {key:'dialog_req',label:'上司と一緒にキャリアを考えたい',field:'req',seg:null,re:'面談|1on1|話す(機会|時間)|一緒に考え|相談(できる|する機会|の場)'},
+ {key:'eval_req',label:'評価への言及',field:'req',seg:null,re:'評価|フィードバック|認め(て|られ)'},
+ {key:'mid_yarigai_ikusei',label:'ミドル層:やりがいが育成・他者に向く',field:'y',seg:['ミドル'],re:'後輩|育成|指導|職員(の|を)|仲間|チーム|相談(に|され|を受)|まとめ|フォロー|全体を(見|把握)'},
+ {key:'chief_yarigai_ikusei',label:'主任層:やりがいが育成・他者に向く',field:'y',seg:['主任'],re:'後輩|育成|指導|職員(の|を)|仲間|チーム|相談(に|され|を受)|まとめ|フォロー|全体を(見|把握)'},
+ {key:'chiefmid_ikusei_kadai',label:'主任・ミドル:育成の進め方を考えている',field:'k',seg:['主任','ミドル'],re:'後輩|育成|指導|伝え方|伝わら|任せ|どう伝え'}
+];
+var SAT=['非常に満足','満足','やや満足','やや不満','非常に不満'], POS=['非常に満足','満足','やや満足'];
+
+function parseYear(v){ if(v==null) return null; v=(''+v).trim(); if(!v) return null; var m;
+ if(m=v.match(/^(\d+)年$/)) return +m[1]; if(/11\s*[～~]\s*15/.test(v)) return 13; if(/16\s*年?\s*[～~]\s*20/.test(v)) return 18; if(/20年以上/.test(v)) return 22; if(m=v.match(/(\d+)/)) return +m[1]; return null; }
+function roleSeg(v){ v=v||''; if(/園長|副園長|施設長|管理者|児発管|本部/.test(v)) return '管理職'; if(/副主任|副主幹|リーダー/.test(v)) return 'ミドル'; if(/主任|主幹/.test(v)) return '主任'; return '一般'; }
+function findCol(keys,re){ for(var i=0;i<keys.length;i++){ if(re.test(keys[i])) return keys[i]; } return null; }
+function round1(x){ return Math.round(x*10)/10; }
+function median(arr){ var a=arr.filter(function(x){return x!=null;}).slice().sort(function(x,y){return x-y;}); if(!a.length) return null; var m=Math.floor(a.length/2); return a.length%2 ? a[m] : (a[m-1]+a[m])/2; }
+function mean(arr){ if(!arr.length) return null; var s=0; for(var i=0;i<arr.length;i++) s+=arr[i]; return s/arr.length; }
+
+// ---- テンプレート/対象外ファイル名の除外パターン ----
+// 「〇〇御中】キャリアパス策定支援フォーマット」は各法人の実回答ファイル名なので除外しない。
+// 除外するのはマスター雛形・商談用サンプル・保存用コピーなど、"大元"側のファイルのみ。
+var SKIP_FILE_NAME_RE = /大元|商談用|保存用/;
+
+function pickResponseRowsFromSheet(ss){
+  var sheets=ss.getSheets();
+  for(var s=0;s<sheets.length;s++){
+    var sh=sheets[s]; var lc=sh.getLastColumn(); if(lc<3) continue;
+    var hdr=sh.getRange(1,1,1,lc).getValues()[0].join('|');
+    if(/役職/.test(hdr) && /勤続/.test(hdr)){
+      var data=sh.getDataRange().getValues(); if(data.length<2) continue;
+      var head=data[0].map(function(x){return ''+x;});
+      var rows=[]; for(var r=1;r<data.length;r++){ var o={}; for(var c=0;c<head.length;c++){ o[head[c]]=data[r][c]; } rows.push(o); }
+      if(rows.length) return rows;
+    }
+  }
+  return null;
+}
+
+// フォルダ内（1階層下のサブフォルダも含む）のGoogleスプレッドシートから、回答シートを探す
+function findResponseRowsInFolder(folder){
+  var files=folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  while(files.hasNext()){
+    var f=files.next();
+    var name=f.getName();
+    if(SKIP_FILE_NAME_RE.test(name)) continue;
+    try{
+      var rows=pickResponseRowsFromSheet(SpreadsheetApp.open(f));
+      if(rows && rows.length) return rows;
+    }catch(e){ /* 開けないファイルはスキップ */ }
+  }
+  // 1階層下のサブフォルダも見る（年度別フォルダ等の運用に対応）
+  var subs=folder.getFolders();
+  while(subs.hasNext()){
+    var sub=subs.next();
+    var rows2=findResponseRowsInFolder2(sub);
+    if(rows2) return rows2;
+  }
+  return null;
+}
+function findResponseRowsInFolder2(folder){
+  var files=folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+  while(files.hasNext()){
+    var f=files.next();
+    if(SKIP_FILE_NAME_RE.test(f.getName())) continue;
+    try{
+      var rows=pickResponseRowsFromSheet(SpreadsheetApp.open(f));
+      if(rows && rows.length) return rows;
+    }catch(e){}
+  }
+  return null;
+}
+
+function analyzeRows(rows){
+  var keys=Object.keys(rows[0]);
+  var cEmp=findCol(keys,/雇用形態/),cRole=findCol(keys,/役職/),cTen=findCol(keys,/勤続/),cExp=findCol(keys,/経験年数/),
+      cSkill=findCol(keys,/学びたいテーマ|取得したい/),cY=findCol(keys,/やりがい/),cK=findCol(keys,/改善が必要/),cG=findCol(keys,/目標を教え/),cReq=findCol(keys,/要望や提案/);
+  var key=cEmp||cRole||cTen;
+  rows=rows.filter(function(r){return (''+(r[key]||'')).trim()!=='';});
+  var n=rows.length; var q={n:n};
+  var cSat=null; for(var i=0;i<keys.length;i++){ var p=keys[i]; var h=rows.filter(function(r){return SAT.indexOf((''+r[p]).trim())>=0;}).length; if(h>=Math.max(2,n*0.3)){cSat=p;break;} }
+  if(cEmp){ var reg=0,non=0,ctr=0; rows.forEach(function(r){var e=''+r[cEmp]; if(/正社員|正規/.test(e))reg++; else if(/契約|年俸/.test(e))ctr++; else non++;}); q.regPct=round1(100*reg/n);q.nonPct=round1(100*non/n);q.ctrPct=round1(100*ctr/n); }
+  if(cRole){ q.noRolePct=round1(100*rows.filter(function(r){return /なし|一般/.test(''+r[cRole]);}).length/n); }
+  var ten=[],exp=[],ch=0,bo=0; rows.forEach(function(r){var t=parseYear(r[cTen]),x=parseYear(r[cExp]); if(t!=null)ten.push(t); if(x!=null)exp.push(x); if(t!=null&&x!=null){bo++; if(x>t)ch++;}});
+  if(ten.length) q.tenAvg=Math.round(mean(ten)*100)/100;
+  if(exp.length) q.expAvg=Math.round(mean(exp)*100)/100;
+  if(bo) q.chutoPct=round1(100*ch/bo);
+  if(cSat){ var a=rows.filter(function(r){return SAT.indexOf((''+r[cSat]).trim())>=0;}).length, pp=rows.filter(function(r){return POS.indexOf((''+r[cSat]).trim())>=0;}).length; if(a) q.satPos=round1(100*pp/a); }
+  if(cSkill){ var a2=rows.filter(function(r){return (''+r[cSkill]).trim()!=='';}).length, h2=rows.filter(function(r){return /発達|療育|障害|インクルーシブ|グレー|加配/.test(''+r[cSkill]);}).length; if(a2) q.devPct=round1(100*h2/a2); }
+  var people=rows.map(function(r){ return {seg:roleSeg(''+(cRole?r[cRole]:'')), y:cY?''+r[cY]:'', k:cK?''+r[cK]:'', g:cG?''+r[cG]:'', req:cReq?''+r[cReq]:''}; });
+  var qual={}, qualCounts={};
+  THEMES.forEach(function(t){ var set=t.seg?people.filter(function(p){return t.seg.indexOf(p.seg)>=0;}):people; var ans=set.filter(function(p){return (''+p[t.field]).trim()!=='';}); var re=new RegExp(t.re); var matched=ans.filter(function(p){return re.test(p[t.field]);}).length; var pct=ans.length?round1(100*matched/ans.length):null; qual[t.key]={pct:pct,n:ans.length}; qualCounts[t.key]=[ans.length,matched]; });
+  return {q:q, qual:qual, qualCounts:qualCounts, people:people};   // 集計値のみ（PIIなし）。peopleは呼び出し元でベースライン集計にのみ使う。
+}
+
+function getExcludeNames(){
+  var prop=PropertiesService.getScriptProperties().getProperty('BASELINE_EXCLUDE_NAMES');
+  var names=DEFAULT_EXCLUDE_NAMES.slice();
+  if(prop){ prop.split(',').forEach(function(s){ s=s.trim(); if(s) names.push(s); }); }
+  return names;
+}
+
+// マスターフォルダ配下の法人フォルダを走査し、法人ごとの集計値（レコード）を作る。
+// Driveスキャンが必要な唯一の重い処理。除外は名前ベースのものだけをここで適用し、
+// 「特定の1法人を除外」は軽量な aggregateFirmRecords 側で行う（都度Driveを再走査しないため）。
+function computeFirmRecords(){
+  var master=DriveApp.getFolderById(MASTER_FOLDER_ID);
+  var excludeNames=getExcludeNames();
+  var records=[];
+  var subs=master.getFolders();
+  while(subs.hasNext()){
+    var sub=subs.next();
+    var name=sub.getName();
+    var skip=false; for(var i=0;i<excludeNames.length;i++){ if(excludeNames[i] && name.indexOf(excludeNames[i])>=0){ skip=true; break; } }
+    if(skip) continue;
+    var rows;
+    try{ rows=findResponseRowsInFolder(sub); }catch(e){ rows=null; }
+    if(!rows || rows.length<MIN_N) continue;
+    var res;
+    try{ res=analyzeRows(rows); }catch(e){ continue; }
+    if(res.q.n<MIN_N) continue;
+    records.push({ id:sub.getId(), name:name, n:res.q.n, q:res.q, qc:res.qualCounts });
+  }
+  return records;
+}
+
+// 法人レコードの配列から、指定の1法人（excludeFolderId）を除いて集計する。Driveアクセスなし・一瞬で終わる。
+function aggregateFirmRecords(records, excludeFolderId){
+  var quantVals={regPct:[],nonPct:[],ctrPct:[],noRolePct:[],tenAvg:[],expAvg:[],chutoPct:[],satPos:[],devPct:[]};
+  var qualAgg={}; THEMES.forEach(function(t){ qualAgg[t.key]={ans:0,matched:0}; });
+  var lawCount=0, peopleCount=0, firms=[];
+  records.forEach(function(rec){
+    if(excludeFolderId && rec.id===excludeFolderId) return;
+    lawCount++; peopleCount+=rec.n; firms.push({name:rec.name, n:rec.n});
+    Object.keys(quantVals).forEach(function(k){ if(rec.q[k]!=null) quantVals[k].push(rec.q[k]); });
+    THEMES.forEach(function(t){ var c=rec.qc[t.key]; if(c){ qualAgg[t.key].ans+=c[0]; qualAgg[t.key].matched+=c[1]; } });
+  });
+  var quant={};
+  Object.keys(quantVals).forEach(function(k){
+    var arr=quantVals[k];
+    quant[k]= arr.length ? {median:round1(median(arr)), mean:round1(mean(arr)), min:Math.min.apply(null,arr), max:Math.max.apply(null,arr)} : null;
+  });
+  var qual=[];
+  THEMES.forEach(function(t){
+    var a=qualAgg[t.key];
+    qual.push({key:t.key,label:t.label,field:t.field,seg:t.seg,regex:t.re,basePct:a.ans?round1(100*a.matched/a.ans):null,baseN:a.ans});
+  });
+  return { generatedAt:Utilities.formatDate(new Date(),'Asia/Tokyo','yyyy-MM-dd HH:mm'), lawCount:lawCount, peopleCount:peopleCount, quant:quant, qual:qual, firms:firms };
+}
+
+function saveFirmRecordsCache(records){
+  var props=PropertiesService.getScriptProperties();
+  // 前回分のチャンクを掃除
+  var prevCount=+(props.getProperty(FIRM_RECORDS_COUNT_KEY)||0);
+  for(var i=0;i<prevCount;i++){ props.deleteProperty(FIRM_RECORDS_CHUNK_PREFIX+i); }
+  var json=JSON.stringify(records);
+  var chunks=[]; for(var p=0;p<json.length;p+=CHUNK_SIZE){ chunks.push(json.slice(p,p+CHUNK_SIZE)); }
+  chunks.forEach(function(c,i){ props.setProperty(FIRM_RECORDS_CHUNK_PREFIX+i, c); });
+  props.setProperty(FIRM_RECORDS_COUNT_KEY, String(chunks.length));
+}
+function loadFirmRecordsCache(){
+  var props=PropertiesService.getScriptProperties();
+  var count=+(props.getProperty(FIRM_RECORDS_COUNT_KEY)||0);
+  if(!count) return null;
+  var parts=[]; for(var i=0;i<count;i++){ parts.push(props.getProperty(FIRM_RECORDS_CHUNK_PREFIX+i)||''); }
+  try{ return JSON.parse(parts.join('')); }catch(e){ return null; }
+}
+
+// 毎日の自動更新トリガーから呼ばれる。Driveを走査して法人別レコードと、除外なし版の集計キャッシュを作り直す。
+function refreshBaselineCache(){
+  var records=computeFirmRecords();
+  saveFirmRecordsCache(records);
+  var base=aggregateFirmRecords(records, null);
+  var props=PropertiesService.getScriptProperties();
+  props.setProperty(BASELINE_CACHE_KEY, JSON.stringify(base));
+  props.setProperty(BASELINE_CACHE_AT_KEY, new Date().toISOString());
+  return base;
+}
+
+// 管理者が初回に1回だけエディタから実行するセットアップ関数。
+// キャッシュを作成し、毎日3時(JST)に自動更新するトリガーを設定する。
+function setupBaseline(){
+  // 既存の同名トリガーがあれば一旦削除してから作り直す（二重登録防止）
+  var triggers=ScriptApp.getProjectTriggers();
+  for(var i=0;i<triggers.length;i++){
+    if(triggers[i].getHandlerFunction()==='refreshBaselineCache'){ ScriptApp.deleteTrigger(triggers[i]); }
+  }
+  ScriptApp.newTrigger('refreshBaselineCache').timeBased().everyDays(1).atHour(3).inTimezone('Asia/Tokyo').create();
+  var base=refreshBaselineCache();
+  Logger.log('セットアップ完了: lawCount=%s peopleCount=%s', base.lawCount, base.peopleCount);
+  return base;
+}
+
+// ==== 第1回・第2回資料（pptx/Googleスライド）からのテキスト抽出 ====
+// fileId のファイルがGoogleスライドでなければ、一時的にGoogleスライド形式へ変換コピーして読み取り、
+// 読み取り後に一時コピーは削除する（元ファイルは一切変更しない）。
+function extractDeckText(fileId){
+  var file=DriveApp.getFileById(fileId);
+  var mime=file.getMimeType();
+  var slidesId=fileId, tempId=null;
+  if(mime!==MimeType.GOOGLE_SLIDES){
+    var copied=Drive.Files.copy({mimeType:MimeType.GOOGLE_SLIDES, name:'[一時変換] '+file.getName()}, fileId);
+    tempId=copied.id; slidesId=tempId;
+  }
+  try{
+    var pres=SlidesApp.openById(slidesId);
+    var out=[];
+    pres.getSlides().forEach(function(slide, idx){
+      var texts=[];
+      slide.getShapes().forEach(function(shape){
+        try{ if(shape.getText){ var t=shape.getText().asString(); if(t && t.trim()) texts.push(t.trim()); } }catch(e){}
+      });
+      try{
+        slide.getTables().forEach(function(table){
+          var nr=table.getNumRows(), nc=table.getNumColumns();
+          for(var r=0;r<nr;r++){
+            var rowTexts=[];
+            for(var c=0;c<nc;c++){ try{ var ct=table.getCell(r,c).getText().asString().trim(); if(ct) rowTexts.push(ct); }catch(e){} }
+            if(rowTexts.length) texts.push(rowTexts.join(' | '));
+          }
+        });
+      }catch(e){}
+      if(texts.length) out.push('--- スライド'+(idx+1)+' ---\n'+texts.join('\n'));
+    });
+    return out.join('\n\n');
+  } finally {
+    if(tempId){ try{ DriveApp.getFileById(tempId).setTrashed(true); }catch(e){} }
+  }
+}
+
+function fmtBaseRange(s,u){ if(!s) return '—'; return '中央'+s.median+(u||'')+'（範囲'+s.min+(u||'')+'〜'+s.max+(u||'')+'）'; }
+
+// アンケート集計(target)・全法人ベースライン(base)・第1回/第2回資料テキストをまとめて、
+// career-path-survey-analysis 等のSkillに準じた本格分析用プロンプトを組み立てる。
+function buildFullPrompt(lawName, target, base, deck1Text, deck2Text){
+  var QLABEL=[['n','回答者数',''],['regPct','正規職員','%'],['nonPct','非正規（パート・サポーター等）','%'],['ctrPct','契約社員（年俸制）','%'],['noRolePct','役職なし（一般）','%'],['tenAvg','平均勤続年数','年'],['expAvg','平均経験年数','年'],['chutoPct','中途（経験＞勤続）','%'],['satPos','研修満足（肯定）','%'],['devPct','発達支援への学習志向','%']];
+  var L=[];
+  L.push('# 依頼：キャリアパス策定支援の本格分析レポートを作成してください。');
+  L.push('対象法人：'+(lawName||'（法人名）'));
+  L.push('');
+  L.push('以下の3種類の資料（①アンケート集計値、②全法人ベースライン、③第1回・第2回打合せ資料の全文）を踏まえ、career-path-director-hearing / career-path-hearing-summary / career-path-survey-analysis の各Skillの方針に沿って、次を作成してください。');
+  L.push('1. 方針メモ（第1回資料から。目指したい組織像・職層方針・情意項目候補などを整理。事前アンケートとヒアリングでの深掘りを区別）');
+  L.push('2. 第2回ヒアリング要点整理（対象者ごとに4軸で整理。法人・決裁権者・園長への批判に類する発言は本文に含めず、確認事項として別出しする）');
+  L.push('3. アンケート分析レポート（9セクション：属性分析／勤続経験分析／やりがい改善点／学びたいスキル／キャリア目標／研修満足度／要望／総括／課題→打ち手対応表）');
+  L.push('');
+  L.push('## 最重要:3つの資料を突き合わせること');
+  L.push('- アンケート分析レポートの「8. 提案:キャリアパス策定の方向性、総括」と「9. 課題→打ち手対応表」は、アンケート単独の集計から書かず、必ず①アンケート・②第1回資料（決裁権者の意向）・③第2回資料（ミドルリーダーの声）の3つを突き合わせて書くこと。');
+  L.push('- 同じ趣旨の指摘がアンケートの自由記述・決裁権者の発言・ミドルリーダーのヒアリングの複数にまたがって出ている場合は、それを最優先の構造課題として扱い、「〇〇という点は、アンケートの自由記述複数件、第2回ヒアリングの発言、決裁権者の意向のいずれからも共通して見られる」という形で、根拠が複数資料にまたがっていることを明記する。');
+  L.push('- 逆に、アンケートだけ／ヒアリングだけにしか出てこない論点も、それはそれとして扱ってよい(無理に全資料に紐づけない)。');
+  L.push('');
+  L.push('## トーン規則（必守）');
+  L.push('- 「平均の○倍」等の倍率表現は使わない（「高め／比較的多い／やや控えめ」等に）。');
+  L.push('- アンケートは職員の主観的な声。否定的に見せず、前向きな志向・要望として「キャリアパスでどう応えるか」に接続する。');
+  L.push('- 数値は必ず具体的に示し、曖昧な言い回しで終わらせない。');
+  L.push('- 複数の自由記述から再構成できる構造的な発見（同じ趣旨の指摘が複数回答者から出ている等）を優先的に拾う。');
+  L.push('- 生成後は career-path-wording-guard の観点（事業形態に合う用語・機微情報の除外）で必ずセルフチェックする。');
+  L.push('');
+  L.push('## ①アンケート集計（貴法人 / 全法人'+(base.lawCount||0)+'法人・'+(base.peopleCount||0)+'名）');
+  QLABEL.forEach(function(c){ var k=c[0],lab=c[1],u=c[2];
+    if(k==='n'){ L.push('- 回答者数：'+(target.q.n||0)+'名'); return; }
+    var tv=target.q[k]; var bs=base.quant?base.quant[k]:null;
+    L.push('- '+lab+'：貴法人 '+(tv==null?'—':tv+u)+' ／ 全法人 '+fmtBaseRange(bs,u));
+  });
+  L.push('');
+  L.push('## ①-2 質的傾向（貴法人 / 全法人）');
+  (base.qual||[]).forEach(function(t){ var r=(target.qual||{})[t.key]||{}; L.push('- '+t.label+(t.seg?'（'+t.seg.join('・')+'）':'')+'：貴法人 '+(r.pct==null?'—':r.pct+'%')+'(n='+(r.n||0)+') ／ 全法人 '+(t.basePct==null?'—':t.basePct+'%')+'(n='+(t.baseN||0)+')'); });
+  L.push('');
+  L.push('## ②第1回打合せ資料（原文）');
+  L.push(deck1Text || '（未提供）');
+  L.push('');
+  L.push('## ③第2回打合せ資料（原文）');
+  L.push(deck2Text || '（未提供）');
+  L.push('');
+  L.push('上記をもとに、指示した1〜3の成果物を作成してください。');
+  return L.join('\n');
+}
+
+function doGet(e){
+  var cb=(e.parameter.callback||'').replace(/[^a-zA-Z0-9_$]/g,'');
+  var out;
+  try{
+    var need=PropertiesService.getScriptProperties().getProperty('TOKEN');
+    if(need && e.parameter.token!==need){ out={ok:false,error:'認証エラー（token不一致）'}; }
+    else if(e.parameter.fullreport){
+      var fid=(e.parameter.id||'').trim();
+      if(!fid){ out={ok:false,error:'アンケートのスプレッドシートIDがありません'}; }
+      else{
+        var fss=SpreadsheetApp.openById(fid);
+        var frows=pickResponseRowsFromSheet(fss);
+        if(!frows||frows.length<3){ out={ok:false,error:'回答シートが見つかりませんでした'}; }
+        else{
+          var ftarget=analyzeRows(frows);
+          var frecords=loadFirmRecordsCache();
+          var fexcludeFolderId=null;
+          try{ var ff=DriveApp.getFileById(fid); var fparents=ff.getParents(); if(fparents.hasNext()) fexcludeFolderId=fparents.next().getId(); }catch(e2){}
+          if(!frecords){ frecords=computeFirmRecords(); saveFirmRecordsCache(frecords); }
+          var fbase=aggregateFirmRecords(frecords, fexcludeFolderId);
+          var deck1Text='', deck2Text='';
+          try{ if(e.parameter.deck1) deck1Text=extractDeckText(e.parameter.deck1.trim()); }catch(e3){ deck1Text='（第1回資料の読み込みに失敗: '+e3.message+'）'; }
+          try{ if(e.parameter.deck2) deck2Text=extractDeckText(e.parameter.deck2.trim()); }catch(e4){ deck2Text='（第2回資料の読み込みに失敗: '+e4.message+'）'; }
+          var lawName=(e.parameter.name||'').trim();
+          var prompt=buildFullPrompt(lawName, ftarget, fbase, deck1Text, deck2Text);
+          var apiKey=PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+          if(apiKey){
+            try{
+              var resp=UrlFetchApp.fetch('https://api.anthropic.com/v1/messages',{
+                method:'post',
+                headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','content-type':'application/json'},
+                payload:JSON.stringify({model:'claude-sonnet-5',max_tokens:16000,messages:[{role:'user',content:prompt}]}),
+                muteHttpExceptions:true
+              });
+              var rj=JSON.parse(resp.getContentText());
+              if(rj && rj.content && rj.content[0] && rj.content[0].text){ out={ok:true, generated:true, text:rj.content[0].text}; }
+              else{ out={ok:true, generated:false, text:prompt, note:'AI生成に失敗したためプロンプトを返します: '+resp.getContentText().slice(0,300)}; }
+            }catch(e5){ out={ok:true, generated:false, text:prompt, note:'AI呼び出しエラーのためプロンプトを返します: '+e5.message}; }
+          }else{
+            out={ok:true, generated:false, text:prompt};
+          }
+        }
+      }
+    }
+    else if(e.parameter.baseline){
+      if(e.parameter.excludeId){
+        // 自己比較を避けたい場合：対象シートIDが属するフォルダを特定し、キャッシュ済みの
+        // 法人別レコードからその1法人だけを除いて集計する（Drive再走査なし・一瞬で終わる）。
+        var excludeFolderId=null;
+        try{
+          var f=DriveApp.getFileById(e.parameter.excludeId.trim());
+          var parents=f.getParents();
+          if(parents.hasNext()) excludeFolderId=parents.next().getId();
+        }catch(err){ /* 特定できなければ除外なしで計算 */ }
+        var records=loadFirmRecordsCache();
+        if(records){ out={ok:true, base:aggregateFirmRecords(records, excludeFolderId), live:true}; }
+        else{
+          // キャッシュが無い場合のみ、フォールバックとしてDriveを都度走査する（時間がかかる）
+          var freshRecords=computeFirmRecords();
+          saveFirmRecordsCache(freshRecords);
+          out={ok:true, base:aggregateFirmRecords(freshRecords, excludeFolderId), live:true};
+        }
+      }else{
+        var cached=PropertiesService.getScriptProperties().getProperty(BASELINE_CACHE_KEY);
+        if(cached){ out={ok:true, base:JSON.parse(cached), live:false}; }
+        else{ out={ok:true, base:refreshBaselineCache(), live:true}; }
+      }
+    }
+    else{
+      var id=(e.parameter.id||'').trim();
+      if(!id){ out={ok:false,error:'スプレッドシートIDがありません'}; }
+      else{
+        var ss=SpreadsheetApp.openById(id);
+        var rows=pickResponseRowsFromSheet(ss);
+        if(!rows||rows.length<3){ out={ok:false,error:'回答シート（役職・勤続などの列を持つタブ）が見つかりませんでした'}; }
+        else{ var res=analyzeRows(rows); out={ok:true, q:res.q, qual:res.qual}; }
+      }
+    }
+  }catch(err){ out={ok:false,error:'取得エラー: '+err.message}; }
+  var body=JSON.stringify(out);
+  if(cb){ return ContentService.createTextOutput(cb+'('+body+');').setMimeType(ContentService.MimeType.JAVASCRIPT); }
+  return ContentService.createTextOutput(body).setMimeType(ContentService.MimeType.JSON);
+}

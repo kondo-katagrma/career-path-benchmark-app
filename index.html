@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>キャリアパス アンケート傾向ベンチマーク</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{ --fg:#2b2b2b; --muted:#666; --line:#d9d9d9; --head:#ecf0de; --accent:#2E5A2E; --bg:#fafafa; }
+  *{box-sizing:border-box}
+  body{font-family:"Meiryo","メイリオ",system-ui,sans-serif;color:var(--fg);background:var(--bg);margin:0;padding:24px;line-height:1.6}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px} h2{font-size:17px;color:var(--accent);border:0;margin:28px 0 8px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+  .pii{background:#f3f7ec;border:1px solid #cfe0b0;border-radius:8px;padding:10px 12px;font-size:13px;color:#3a5a1f}
+  label{font-weight:bold;font-size:14px}
+  input[type=text]{padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;width:260px;font-family:inherit}
+  input[type=file]{margin-top:8px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:var(--head);font-weight:bold} td.num{text-align:center;white-space:nowrap}
+  .hi{font-weight:bold;color:var(--accent)}
+  .foot{color:var(--muted);font-size:12px;margin-top:6px}
+  .err{color:#a11;font-size:14px}
+  .hint{color:var(--muted);font-size:12.5px}
+  button{font-family:inherit;font-size:13.5px;padding:8px 14px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer}
+  button:hover{opacity:.9}
+  textarea{width:100%;height:200px;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre;overflow:auto}
+  .flow th:last-child,.flow td:last-child{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>キャリアパス アンケート傾向ベンチマーク</h1>
+  <p class="sub">現状把握アンケート（キャリアパス策定支援フォーマット）を読み込むと、<strong>貴法人 vs これまでの全法人の傾向</strong>を自動で表にします。</p>
+
+  <div class="card">
+    <div class="pii">🔒 ファイルは<strong>このブラウザの中だけ</strong>で処理され、どこにも送信されません（氏名などの個人情報は集計にのみ使い、画面には表示しません）。</div>
+    <p style="margin:14px 0 4px"><label>法人名（任意・表示用）</label></p>
+    <input id="lawName" type="text" placeholder="例）〇〇会">
+    <p style="margin:16px 0 4px"><label>アンケート（スプレッドシート）のURL</label></p>
+    <input id="url" type="text" placeholder="https://docs.google.com/spreadsheets/d/..." style="width:100%">
+    <div style="margin-top:8px"><button id="urlBtn">URLから取得</button></div>
+    <p class="hint">共有された「キャリアパス策定支援フォーマット」のURLを貼って取得します。氏名等は<strong>Google側で集計に使うだけ</strong>で、ブラウザには数値（集計値）のみ届きます。</p>
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+    <p style="margin:0 0 4px"><label>または、ファイルを選択（.xlsx / .csv）</label></p>
+    <input id="file" type="file" accept=".xlsx,.xls,.csv">
+    <p class="hint" id="status">回答タブは自動で判別します（タブ名の統一は不要）。</p>
+    <p class="err" id="err"></p>
+  </div>
+
+  <div id="out"></div>
+
+  <div class="card" id="fullCard">
+    <h2 style="margin-top:0">本格分析（方針メモ・ヒアリング要点・9セクションレポート）</h2>
+    <p style="font-size:13.5px;margin:0 0 10px">アンケートに加えて、第1回・第2回打合せ資料（pptx/Googleスライド）のURLも貼ると、それらを踏まえた本格的な分析を作成します。</p>
+    <p style="margin:0 0 4px"><label>第1回打合せ資料のURL（任意）</label></p>
+    <input id="deck1Url" type="text" placeholder="https://drive.google.com/file/d/... または https://docs.google.com/presentation/d/..." style="width:100%">
+    <p style="margin:12px 0 4px"><label>第2回打合せ資料のURL（任意）</label></p>
+    <input id="deck2Url" type="text" placeholder="https://drive.google.com/file/d/... または https://docs.google.com/presentation/d/..." style="width:100%">
+    <div style="margin-top:10px"><button id="fullBtn">本格分析を作成</button></div>
+    <p class="hint" id="fullStatus">上の「法人名」「アンケートのURL」も使用します。資料の読み込みに数十秒かかることがあります。</p>
+    <p class="err" id="fullErr"></p>
+    <div id="fullOut"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">全体の流れ（このツールの位置づけ）</h2>
+    <p style="font-size:13.5px;margin:0 0 8px">第3回準備は、性質の違う工程で構成されます。機械的な集計はこのツールで、判断・文章化が要る工程は Claude（career-path プラグイン）で行います。</p>
+    <table class="flow"><tr><th>工程</th><th>担当</th></tr>
+    <tr><td>アンケートの集計・傾向の可視化（量的・質的ベンチマーク）</td><td>このツール（ブラウザ内・誰でも）</td></tr>
+    <tr><td>第1回デッキからの方針メモ抽出</td><td>Claude（プラグイン）</td></tr>
+    <tr><td>自由記述からの課題の読み解き（制度・仕組みの再構成）</td><td>Claude（プラグイン）</td></tr>
+    <tr><td>レポート文章の作成（トーン・体裁）</td><td>Claude（プラグイン）</td></tr>
+    <tr><td>第4回に向けたヒアリング設計</td><td>Claude（プラグイン）</td></tr></table>
+    <p class="foot">方針メモ抽出・課題の読み解き・レポート文章・ヒアリング設計は、判断や文章化が必要なため静的なアプリでは再現できず、Claude（プラグイン）が担います。ファイルを読み込むと、下に「Claudeで仕上げる」プロンプト生成が出ます。</p>
+  </div>
+</div>
+
+<script>
+const QLABEL = [
+  ['n','回答者数',''],['regPct','正規職員','%'],['nonPct','非正規（パート・サポーター等）','%'],
+  ['ctrPct','契約社員（年俸制）','%'],['noRolePct','役職なし（一般）','%'],
+  ['tenAvg','平均勤続年数','年'],['expAvg','平均経験年数','年'],['chutoPct','中途（経験＞勤続）','%'],
+  ['satPos','研修満足（肯定）','%'],['devPct','発達支援への学習志向','%']
+];
+// ベースライン（全法人の集計値）は静的な埋め込みではなく、Webアプリから毎回取得する。
+// マスターフォルダ（career-path-survey-analysisの案件フォルダ群）に新しい法人が増えるたびに
+// 自動で反映される。取得できるまでは null。
+let BASE = null;
+
+function findCol(keys, re){ for(const k of keys){ if(re.test(k)) return k; } return null; }
+function parseYear(v){ if(v==null) return null; v=(''+v).trim(); if(!v) return null;
+  let m; if(m=v.match(/^(\d+)年$/)) return +m[1]; if(/11\s*[～~]\s*15/.test(v)) return 13; if(/16\s*年?\s*[～~]\s*20/.test(v)) return 18; if(/20年以上/.test(v)) return 22; if(m=v.match(/(\d+)/)) return +m[1]; return null; }
+function roleSeg(v){ v=v||''; if(/園長|副園長|施設長|管理者|児発管|本部/.test(v)) return '管理職'; if(/副主任|副主幹|リーダー/.test(v)) return 'ミドル'; if(/主任|主幹/.test(v)) return '主任'; return '一般'; }
+function med(a){ a=a.filter(x=>x!=null).sort((x,y)=>x-y); if(!a.length) return null; const m=Math.floor(a.length/2); return a.length%2?a[m]:(a[m-1]+a[m])/2; }
+const SAT=['非常に満足','満足','やや満足','やや不満','非常に不満'], POS=['非常に満足','満足','やや満足'];
+
+function pickResponseRows(wb){
+  for(const name of wb.SheetNames){
+    const ws=wb.Sheets[name];
+    const arr=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    if(!arr.length) continue;
+    const hdr=(arr[0]||[]).join('|');
+    if(/役職/.test(hdr) && /勤続/.test(hdr)){
+      return XLSX.utils.sheet_to_json(ws,{defval:''});
+    }
+  }
+  return null;
+}
+
+function analyze(rows){
+  const keys=Object.keys(rows[0]);
+  const cEmp=findCol(keys,/雇用形態/),cRole=findCol(keys,/役職/),cTen=findCol(keys,/勤続/),cExp=findCol(keys,/経験年数/),
+        cSkill=findCol(keys,/学びたいテーマ|取得したい/),cSatCand=keys,
+        cY=findCol(keys,/やりがい/),cK=findCol(keys,/改善が必要/),cG=findCol(keys,/目標を教え/),cReq=findCol(keys,/要望や提案/);
+  const key=cEmp||cRole||cTen;
+  rows=rows.filter(r=>(''+(r[key]||'')).trim()!=='');
+  const n=rows.length;
+  // satisfaction column
+  let cSat=null; for(const p of keys){ const h=rows.filter(r=>SAT.includes((''+r[p]).trim())).length; if(h>=Math.max(2,n*0.3)){cSat=p;break;} }
+  const q={n};
+  if(cEmp){let reg=0,non=0,ctr=0; rows.forEach(r=>{const e=''+r[cEmp]; if(/正社員|正規/.test(e))reg++;else if(/契約|年俸/.test(e))ctr++;else non++;}); q.regPct=+(100*reg/n).toFixed(1);q.nonPct=+(100*non/n).toFixed(1);q.ctrPct=+(100*ctr/n).toFixed(1);}
+  if(cRole){ q.noRolePct=+(100*rows.filter(r=>/なし|一般/.test(''+r[cRole])).length/n).toFixed(1); }
+  let ten=[],exp=[],ch=0,bo=0; rows.forEach(r=>{const t=parseYear(r[cTen]),x=parseYear(r[cExp]); if(t!=null)ten.push(t); if(x!=null)exp.push(x); if(t!=null&&x!=null){bo++; if(x>t)ch++;}});
+  if(ten.length) q.tenAvg=+(ten.reduce((a,b)=>a+b,0)/ten.length).toFixed(2);
+  if(exp.length) q.expAvg=+(exp.reduce((a,b)=>a+b,0)/exp.length).toFixed(2);
+  if(bo) q.chutoPct=+(100*ch/bo).toFixed(1);
+  if(cSat){const a=rows.filter(r=>SAT.includes((''+r[cSat]).trim())).length,p=rows.filter(r=>POS.includes((''+r[cSat]).trim())).length; if(a) q.satPos=+(100*p/a).toFixed(1);}
+  if(cSkill){const a=rows.filter(r=>(''+r[cSkill]).trim()!=='').length,h=rows.filter(r=>/発達|療育|障害|インクルーシブ|グレー|加配/.test(''+r[cSkill])).length; if(a) q.devPct=+(100*h/a).toFixed(1);}
+  // qual
+  const people=rows.map(r=>({seg:roleSeg(''+(cRole?r[cRole]:'')), y:cY?''+r[cY]:'',k:cK?''+r[cK]:'',g:cG?''+r[cG]:'',req:cReq?''+r[cReq]:''}));
+  const qual={};
+  (BASE.qual||[]).forEach(t=>{ let set=t.seg?people.filter(p=>t.seg.includes(p.seg)):people; const ans=set.filter(p=>(''+p[t.field]).trim()!==''); let re; try{re=new RegExp(t.regex);}catch(e){re=null;} let pct=null; if(ans.length&&re){ pct=+(100*ans.filter(p=>re.test(p[t.field])).length/ans.length).toFixed(1);} qual[t.key]={pct,n:ans.length}; });
+  return {q,qual};
+}
+
+function fmtBase(s){ if(!s) return '—'; return `中央 ${s.median}（範囲 ${s.min}〜${s.max}）`; }
+function render(name, res){
+  const b=BASE; let h=`<h2>${name||'貴法人'} × 全法人の傾向（過去${b.lawCount}法人・${b.peopleCount}名）</h2>`;
+  // quant
+  h+=`<div class="card"><h3 style="margin:0 0 6px;font-size:15px">基礎情報の傾向</h3><table><tr><th>指標</th><th>${name||'貴法人'}</th><th>全法人</th></tr>`;
+  QLABEL.forEach(([k,lab,u])=>{ if(k==='n'){ h+=`<tr><td>${lab}</td><td class="num hi">${res.q.n} 名</td><td class="num">${b.lawCount}法人・${b.peopleCount}名</td></tr>`; return; }
+    const tv=res.q[k]; const bs=b.quant[k];
+    h+=`<tr><td>${lab}</td><td class="num hi">${tv==null?'—':tv+u}</td><td class="num">${bs?('中央 '+bs.median+u+'（'+bs.min+'〜'+bs.max+'）'):'—'}</td></tr>`; });
+  h+=`</table><p class="foot">基礎情報は特徴づけの土台です（数値の対比のみ。良し悪しの評価ではありません）。</p></div>`;
+  // qual
+  h+=`<div class="card"><h3 style="margin:0 0 6px;font-size:15px">職員の声に見られる傾向</h3><table><tr><th>傾向</th><th>${name||'貴法人'}</th><th>全法人</th></tr>`;
+  (b.qual||[]).forEach(t=>{ const r=res.qual[t.key]||{}; const tv=(r.pct==null)?'—':r.pct+'%'; const bv=(t.basePct==null)?'—':t.basePct+'%';
+    h+=`<tr><td>${t.label}${t.seg?'<span class="foot">（'+t.seg.join('・')+'）</span>':''}</td><td class="num hi">${tv}<span class="foot"> n=${r.n||0}</span></td><td class="num">${bv}<span class="foot"> n=${t.baseN||0}</span></td></tr>`; });
+  h+=`</table><p class="foot">「その趣旨の声が見られた割合」です。職員一人ひとりの主観であり、法人の実態評価ではありません。職層別（管理職・主任・ミドル）は人数が小さいことが多いので方向性としてご覧ください。</p></div>`;
+  const prm=buildPrompt(name,res).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  h+=`<div class="card"><h2 style="margin-top:0">Claudeで仕上げる（レポート下書き）</h2><p style="font-size:13.5px;margin:0 0 8px">下記を career-path プラグイン（または Claude）に貼り付けると、この集計を反映したレポートの傾向節を、決められたトーンで作成できます。※判断・文章化はClaudeが担います。</p><button onclick="copyPrompt()">プロンプトをコピー</button> <span id="copyMsg" class="foot"></span><textarea id="promptBox" readonly>${prm}</textarea></div>`;
+  document.getElementById('out').innerHTML=h;
+}
+
+function buildPrompt(name,res){
+  const b=BASE, L=[];
+  L.push('# 依頼：第3回分析レポートの「これまでの支援先の傾向に照らした特徴」の節を作成してください。');
+  L.push('対象法人：'+(name||'（法人名）')+'　／　ベースライン：過去'+b.lawCount+'法人・'+b.peopleCount+'名の匿名集計');
+  L.push('');
+  L.push('## トーン規則（必守）');
+  L.push('- 「平均の○倍」等の倍率表現は使わない（「高め／比較的多い／やや控えめ」等に）。');
+  L.push('- アンケートは職員の主観的な声。否定的に見せず、前向きな志向・要望として「キャリアパスでどう応えるか」に接続する。');
+  L.push('- 「貴法人｜全法人｜キャリアパスでどう応えるか」の表＋短い総括。内部運用メモや冗長・誘導的な言い回しは入れない。');
+  L.push('');
+  L.push('## 量的（基礎情報）');
+  QLABEL.forEach(([k,lab,u])=>{ if(k==='n'){ L.push('- 回答者数：'+res.q.n+'名（全法人：'+b.lawCount+'法人）'); return; } const tv=res.q[k], bs=b.quant[k]; L.push('- '+lab+'：貴法人 '+(tv==null?'—':tv+u)+' ／ 全法人 中央'+(bs?bs.median+u:'—')+'（範囲'+(bs?bs.min+'〜'+bs.max:'')+'）'); });
+  L.push('');
+  L.push('## 質的（職員の声・その趣旨が見られた割合）');
+  (b.qual||[]).forEach(t=>{ const r=res.qual[t.key]||{}; L.push('- '+t.label+(t.seg?'（'+t.seg.join('・')+'）':'')+'：貴法人 '+(r.pct==null?'—':r.pct+'%')+'(n='+(r.n||0)+') ／ 全法人 '+(t.basePct==null?'—':t.basePct+'%')+'(n='+(t.baseN||0)+')'); });
+  L.push('');
+  L.push('上記をもとに、貴法人の特徴（専門志向・役割明確化・育成・キャリア観 等）と、キャリアパス設計の方向性を、上記トーンで簡潔にまとめてください。職層別は人数が小さいので方向性として扱ってください。');
+  return L.join('\n');
+}
+function copyPrompt(){ const t=document.getElementById('promptBox'); if(!t) return; t.focus(); t.select();
+  const done=()=>{ const m=document.getElementById('copyMsg'); if(m) m.textContent='コピーしました'; };
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t.value).then(done).catch(()=>{document.execCommand('copy');done();}); } else { document.execCommand('copy'); done(); } }
+
+// ==== Apps Script Web アプリ設定（デプロイ後にURLを設定。DEPLOY.md参照） ====
+const WEBAPP_URL = localStorage.getItem('cpb_webapp_url') || "https://script.google.com/macros/s/AKfycbzM3Ml2H7pi71IlK9BXXL8aLJlvF0mE590KcgTVj5jRmz4-GKOpPbYIDyKilFFbDkGf4A/exec";
+const WEBAPP_TOKEN = localStorage.getItem('cpb_webapp_token') || "YhkqBDrnZBCc0VwHbjfoId6cgtYYmn3F";
+function extractSheetId(u){ const m=(u||'').match(/\/d\/([a-zA-Z0-9_-]+)/); return m?m[1]:''; }
+function jsonp(url, timeoutMs){ timeoutMs=timeoutMs||20000; return new Promise(resolve=>{ const name='__cb'+Math.random().toString(36).slice(2); const s=document.createElement('script'); let done=false;
+  window[name]=d=>{done=true;delete window[name];s.remove();resolve(d);};
+  s.onerror=()=>{ if(done)return; delete window[name];s.remove();resolve({ok:false,error:'通信に失敗しました（WebアプリURL・デプロイ設定・共有範囲を確認）'});};
+  s.src=url+(url.indexOf('?')>=0?'&':'?')+'callback='+name; document.body.appendChild(s);
+  setTimeout(()=>{ if(!done){delete window[name];s.remove();resolve({ok:false,error:'応答がありませんでした（タイムアウト）'});}},timeoutMs); }); }
+
+// ベースライン（全法人の集計値）をWebアプリから取得してBASEに反映する。
+// excludeId を渡すと、そのスプレッドシートが属する法人フォルダを自己比較を避けるため
+// 除外した上で都度再計算する（やや時間がかかるが、分析対象法人自身が全法人平均に
+// 混入するのを防げる）。省略時はキャッシュ済みの全法人版を高速に返す。
+async function loadBaseline(excludeId){
+  if(WEBAPP_URL.indexOf('http')!==0) return {ok:false,error:'WebアプリURL未設定'};
+  let url=WEBAPP_URL+'?baseline=1'+(WEBAPP_TOKEN?('&token='+encodeURIComponent(WEBAPP_TOKEN)):'');
+  if(excludeId) url+='&excludeId='+encodeURIComponent(excludeId);
+  const d=await jsonp(url, excludeId?60000:20000);
+  if(d&&d.ok&&d.base){ BASE=d.base; }
+  return d;
+}
+// 起動時にキャッシュ済みベースラインを先読みしておく（ファイル選択パス用）
+let baselineReady=loadBaseline();
+
+document.getElementById('urlBtn').addEventListener('click',async()=>{
+  const err=document.getElementById('err'), st=document.getElementById('status'); err.textContent='';
+  const u=document.getElementById('url').value.trim();
+  if(!u){ err.textContent='URLを入力してください。'; return; }
+  const id=extractSheetId(u);
+  if(!id){ err.textContent='GoogleスプレッドシートのURLを認識できませんでした。'; return; }
+  if(WEBAPP_URL.indexOf('http')!==0){ err.textContent='この端末にWebアプリURLが未設定です（管理者に設定を依頼してください）。'; return; }
+  st.textContent='ベースライン確認中（自法人を除外して算出）…';
+  const bd=await loadBaseline(id);
+  if(!bd||!bd.ok){ if(!BASE){ err.textContent=(bd&&bd.error)||'ベースラインの取得に失敗しました。'; st.textContent=''; return; } }
+  st.textContent='取得中…';
+  const d=await jsonp(WEBAPP_URL+'?id='+encodeURIComponent(id)+(WEBAPP_TOKEN?('&token='+encodeURIComponent(WEBAPP_TOKEN)):''));
+  if(!d||!d.ok){ err.textContent=(d&&d.error)||'取得に失敗しました。'; st.textContent=''; return; }
+  render(document.getElementById('lawName').value.trim(), {q:d.q, qual:d.qual});
+  st.textContent='完了（URLから取得・全法人'+BASE.lawCount+'法人と対比。自法人はベースラインから除外済み）';
+});
+
+document.getElementById('file').addEventListener('change',async ev=>{
+  const f=ev.target.files[0]; if(!f) return;
+  const err=document.getElementById('err'), st=document.getElementById('status'); err.textContent='';
+  if(!BASE) await baselineReady;
+  if(!BASE){ err.textContent='ベースライン読み込みに失敗しました。少し待って再選択してください。'; return; }
+  st.textContent='解析中…';
+  const rd=new FileReader();
+  rd.onload=e=>{ try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      const rows=pickResponseRows(wb);
+      if(!rows||rows.length<3){ err.textContent='回答シート（役職・勤続などの列を持つタブ）が見つかりませんでした。'; st.textContent=''; return; }
+      const res=analyze(rows);
+      render(document.getElementById('lawName').value.trim(), res);
+      st.textContent='完了（'+f.name+'）';
+    }catch(ex){ err.textContent='読み込みエラー: '+ex.message; st.textContent=''; }
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+document.getElementById('fullBtn').addEventListener('click', async()=>{
+  const err=document.getElementById('fullErr'), st=document.getElementById('fullStatus'), out=document.getElementById('fullOut');
+  err.textContent=''; out.innerHTML='';
+  const u=document.getElementById('url').value.trim();
+  const id=extractSheetId(u);
+  if(!id){ err.textContent='上の「アンケートのURL」にスプレッドシートのURLを入力してください。'; return; }
+  if(WEBAPP_URL.indexOf('http')!==0){ err.textContent='この端末にWebアプリURLが未設定です。'; return; }
+  const name=document.getElementById('lawName').value.trim();
+  const d1=extractSheetId(document.getElementById('deck1Url').value.trim());
+  const d2=extractSheetId(document.getElementById('deck2Url').value.trim());
+  st.textContent='資料を読み込んで分析を作成中…（数十秒かかることがあります）';
+  let q='?fullreport=1&id='+encodeURIComponent(id);
+  if(name) q+='&name='+encodeURIComponent(name);
+  if(d1) q+='&deck1='+encodeURIComponent(d1);
+  if(d2) q+='&deck2='+encodeURIComponent(d2);
+  if(WEBAPP_TOKEN) q+='&token='+encodeURIComponent(WEBAPP_TOKEN);
+  const d=await jsonp(WEBAPP_URL+q, 120000);
+  if(!d||!d.ok){ err.textContent=(d&&d.error)||'作成に失敗しました。'; st.textContent=''; return; }
+  const label = d.generated ? 'AIが生成したレポート' : 'career-path プラグイン（Claude）に貼り付けるプロンプト';
+  const noteHtml = d.note ? `<p class="hint">${d.note.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</p>` : '';
+  out.innerHTML = `<h3 style="font-size:15px;margin:14px 0 4px">${label}</h3>${noteHtml}<button id="fullCopyBtn">コピー</button> <span id="fullCopyMsg" class="foot"></span><textarea id="fullBox" readonly style="height:320px">${d.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>`;
+  document.getElementById('fullCopyBtn').addEventListener('click', ()=>{
+    const t=document.getElementById('fullBox'); t.focus(); t.select();
+    const done=()=>{ document.getElementById('fullCopyMsg').textContent='コピーしました'; };
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t.value).then(done).catch(()=>{document.execCommand('copy');done();}); } else { document.execCommand('copy'); done(); }
+  });
+  st.textContent=d.generated?'完了（AI生成）':'完了（プロンプトを作成しました。career-path プラグインに貼り付けてください）';
+});
+</script>
+</body>
+</html>
