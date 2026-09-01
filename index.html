@@ -69,7 +69,7 @@
   <div id="out"></div>
 
   <div class="card" id="fullCard">
-    <h2 style="margin-top:0">本格分析（方針メモ・ヒアリング要点・9セクションレポート）</h2>
+    <h2 style="margin-top:0">本格分析（総括＋8セクションの統合レポート）</h2>
     <p style="font-size:13.5px;margin:0 0 10px">アンケートに加えて、第1回・第2回打合せ資料（pptx/Googleスライド）のURLも貼ると、それらを踏まえた本格的な分析を作成します。</p>
     <p style="margin:0 0 4px"><label>第1回打合せ資料のURL（任意）</label></p>
     <input id="deck1Url" type="text" placeholder="https://drive.google.com/file/d/... または https://docs.google.com/presentation/d/..." style="width:100%">
@@ -86,11 +86,10 @@
     <p style="font-size:13.5px;margin:0 0 8px">第3回準備は、性質の違う工程で構成されます。機械的な集計はこのツールで、判断・文章化が要る工程は Claude（career-path プラグイン）で行います。</p>
     <table class="flow"><tr><th>工程</th><th>担当</th></tr>
     <tr><td>アンケートの集計・傾向の可視化（量的・質的ベンチマーク）</td><td>このツール（ブラウザ内・誰でも）</td></tr>
-    <tr><td>第1回デッキからの方針メモ抽出</td><td>Claude（プラグイン）</td></tr>
-    <tr><td>自由記述からの課題の読み解き（制度・仕組みの再構成）</td><td>Claude（プラグイン）</td></tr>
-    <tr><td>レポート文章の作成（トーン・体裁）</td><td>Claude（プラグイン）</td></tr>
+    <tr><td>第1回・第2回資料と自由記述を突き合わせた課題の読み解き</td><td>Claude（プラグイン）</td></tr>
+    <tr><td>総括＋8セクションの統合レポート文章の作成（トーン・体裁）</td><td>Claude（プラグイン）</td></tr>
     <tr><td>第4回に向けたヒアリング設計</td><td>Claude（プラグイン）</td></tr></table>
-    <p class="foot">方針メモ抽出・課題の読み解き・レポート文章・ヒアリング設計は、判断や文章化が必要なため静的なアプリでは再現できず、Claude（プラグイン）が担います。ファイルを読み込むと、下に「Claudeで仕上げる」プロンプト生成が出ます。</p>
+    <p class="foot">課題の読み解き・レポート文章の作成・ヒアリング設計は、判断や文章化が必要なため静的なアプリでは再現できず、Claude（プラグイン）が担います。ファイルを読み込むと、下に「Claudeで仕上げる」プロンプト生成が出ます。</p>
   </div>
 </div>
 
