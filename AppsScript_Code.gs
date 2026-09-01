@@ -317,6 +317,35 @@ function buildFullPrompt(lawName, target, base, deck1Text, deck2Text){
   return L.join('\n');
 }
 
+// セキュリティ：外部からTOKEN付きで呼べる関数は、指定ファイルがマスターフォルダ配下
+// （案件フォルダ群）にあるものだけを対象にする。呼び出し元が用意した任意のファイルID
+// （例えば実行アカウントがアクセスできる無関係な社内ファイル）を読み込ませないため。
+function isWithinMasterFolder(fileId){
+  try{
+    var file=DriveApp.getFileById(fileId);
+    var seen={}, queue=[]; var it=file.getParents();
+    while(it.hasNext()){ queue.push(it.next().getId()); }
+    var depth=0;
+    while(queue.length && depth<12){
+      depth++;
+      var next=[];
+      for(var i=0;i<queue.length;i++){
+        var fid=queue[i];
+        if(fid===MASTER_FOLDER_ID) return true;
+        if(seen[fid]) continue;
+        seen[fid]=true;
+        try{
+          var folder=DriveApp.getFolderById(fid);
+          var pit=folder.getParents();
+          while(pit.hasNext()){ next.push(pit.next().getId()); }
+        }catch(e){}
+      }
+      queue=next;
+    }
+    return false;
+  }catch(e){ return false; }
+}
+
 function doGet(e){
   var cb=(e.parameter.callback||'').replace(/[^a-zA-Z0-9_$]/g,'');
   var out;
@@ -326,6 +355,7 @@ function doGet(e){
     else if(e.parameter.fullreport){
       var fid=(e.parameter.id||'').trim();
       if(!fid){ out={ok:false,error:'アンケートのスプレッドシートIDがありません'}; }
+      else if(!isWithinMasterFolder(fid)){ out={ok:false,error:'指定されたファイルはマスターフォルダ配下ではないため処理できません'}; }
       else{
         var fss=SpreadsheetApp.openById(fid);
         var frows=pickResponseRowsFromSheet(fss);
@@ -338,8 +368,12 @@ function doGet(e){
           if(!frecords){ frecords=computeFirmRecords(); saveFirmRecordsCache(frecords); }
           var fbase=aggregateFirmRecords(frecords, fexcludeFolderId);
           var deck1Text='', deck2Text='';
-          try{ if(e.parameter.deck1) deck1Text=extractDeckText(e.parameter.deck1.trim()); }catch(e3){ deck1Text='（第1回資料の読み込みに失敗: '+e3.message+'）'; }
-          try{ if(e.parameter.deck2) deck2Text=extractDeckText(e.parameter.deck2.trim()); }catch(e4){ deck2Text='（第2回資料の読み込みに失敗: '+e4.message+'）'; }
+          try{
+            if(e.parameter.deck1){ var d1=e.parameter.deck1.trim(); if(!isWithinMasterFolder(d1)) throw new Error('マスターフォルダ配下ではありません'); deck1Text=extractDeckText(d1); }
+          }catch(e3){ deck1Text='（第1回資料の読み込みに失敗: '+e3.message+'）'; }
+          try{
+            if(e.parameter.deck2){ var d2=e.parameter.deck2.trim(); if(!isWithinMasterFolder(d2)) throw new Error('マスターフォルダ配下ではありません'); deck2Text=extractDeckText(d2); }
+          }catch(e4){ deck2Text='（第2回資料の読み込みに失敗: '+e4.message+'）'; }
           var lawName=(e.parameter.name||'').trim();
           var prompt=buildFullPrompt(lawName, ftarget, fbase, deck1Text, deck2Text);
           var apiKey=PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
@@ -366,10 +400,13 @@ function doGet(e){
         // 自己比較を避けたい場合：対象シートIDが属するフォルダを特定し、キャッシュ済みの
         // 法人別レコードからその1法人だけを除いて集計する（Drive再走査なし・一瞬で終わる）。
         var excludeFolderId=null;
+        var exId=e.parameter.excludeId.trim();
         try{
-          var f=DriveApp.getFileById(e.parameter.excludeId.trim());
-          var parents=f.getParents();
-          if(parents.hasNext()) excludeFolderId=parents.next().getId();
+          if(isWithinMasterFolder(exId)){
+            var f=DriveApp.getFileById(exId);
+            var parents=f.getParents();
+            if(parents.hasNext()) excludeFolderId=parents.next().getId();
+          }
         }catch(err){ /* 特定できなければ除外なしで計算 */ }
         var records=loadFirmRecordsCache();
         if(records){ out={ok:true, base:aggregateFirmRecords(records, excludeFolderId), live:true}; }
@@ -388,6 +425,7 @@ function doGet(e){
     else{
       var id=(e.parameter.id||'').trim();
       if(!id){ out={ok:false,error:'スプレッドシートIDがありません'}; }
+      else if(!isWithinMasterFolder(id)){ out={ok:false,error:'指定されたファイルはマスターフォルダ配下ではないため処理できません'}; }
       else{
         var ss=SpreadsheetApp.openById(id);
         var rows=pickResponseRowsFromSheet(ss);

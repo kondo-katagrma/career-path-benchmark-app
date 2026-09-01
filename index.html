@@ -28,9 +28,25 @@
   button:hover{opacity:.9}
   textarea{width:100%;height:200px;margin-top:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre;overflow:auto}
   .flow th:last-child,.flow td:last-child{white-space:nowrap}
+  .overlay{position:fixed;inset:0;background:rgba(10,15,20,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.15);padding:24px;max-width:380px;width:100%}
+  .modal h3{margin:0 0 6px;font-size:16px}
+  .modal p{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .modal input[type=password]{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;font-family:inherit}
 </style>
 </head>
 <body>
+<div class="overlay" id="gate">
+  <div class="modal">
+    <h3>🔒 パスコード</h3>
+    <p>社内CSメンバー向けのツールです。共有されたパスコードを入力してください。</p>
+    <input type="password" id="passInput" placeholder="パスコード" autocomplete="off">
+    <div class="err" id="passErr"></div>
+    <div style="margin-top:14px;text-align:right">
+      <button id="passBtn">開く</button>
+    </div>
+  </div>
+</div>
 <div class="wrap">
   <h1>キャリアパス アンケート傾向ベンチマーク</h1>
   <p class="sub">現状把握アンケート（キャリアパス策定支援フォーマット）を読み込むと、<strong>貴法人 vs これまでの全法人の傾向</strong>を自動で表にします。</p>
@@ -79,6 +95,18 @@
 </div>
 
 <script>
+// 社内配布用の簡易パスコード。直リンク流入の抑止が目的で、本格的な認証ではありません。
+const PASSCODE_PLAIN = "katagrma-cp";
+const SS_GATE = "cpb_gate_ok";
+function openApp(){ document.getElementById("gate").style.display="none"; }
+if(sessionStorage.getItem(SS_GATE)==="1"){ openApp(); }
+document.getElementById("passBtn").onclick = ()=>{
+  const v = document.getElementById("passInput").value.trim();
+  if(v === PASSCODE_PLAIN){ sessionStorage.setItem(SS_GATE,"1"); openApp(); }
+  else { document.getElementById("passErr").textContent = "パスコードが違います。"; }
+};
+document.getElementById("passInput").addEventListener("keydown",e=>{ if(e.key==="Enter") document.getElementById("passBtn").click(); });
+
 const QLABEL = [
   ['n','回答者数',''],['regPct','正規職員','%'],['nonPct','非正規（パート・サポーター等）','%'],
   ['ctrPct','契約社員（年俸制）','%'],['noRolePct','役職なし（一般）','%'],
@@ -180,7 +208,7 @@ function copyPrompt(){ const t=document.getElementById('promptBox'); if(!t) retu
 
 // ==== Apps Script Web アプリ設定（デプロイ後にURLを設定。DEPLOY.md参照） ====
 const WEBAPP_URL = localStorage.getItem('cpb_webapp_url') || "https://script.google.com/macros/s/AKfycbzM3Ml2H7pi71IlK9BXXL8aLJlvF0mE590KcgTVj5jRmz4-GKOpPbYIDyKilFFbDkGf4A/exec";
-const WEBAPP_TOKEN = localStorage.getItem('cpb_webapp_token') || "YhkqBDrnZBCc0VwHbjfoId6cgtYYmn3F";
+const WEBAPP_TOKEN = localStorage.getItem('cpb_webapp_token') || "UuQTSXwBG7DwzsrTkog86afr9dfEzxnS";
 function extractSheetId(u){ const m=(u||'').match(/\/d\/([a-zA-Z0-9_-]+)/); return m?m[1]:''; }
 function jsonp(url, timeoutMs){ timeoutMs=timeoutMs||20000; return new Promise(resolve=>{ const name='__cb'+Math.random().toString(36).slice(2); const s=document.createElement('script'); let done=false;
   window[name]=d=>{done=true;delete window[name];s.remove();resolve(d);};
