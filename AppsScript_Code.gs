@@ -142,6 +142,18 @@ function getExcludeNames(){
   return names;
 }
 
+function isExcludedName(name, excludeNames){
+  for(var i=0;i<excludeNames.length;i++){ if(excludeNames[i] && name.indexOf(excludeNames[i])>=0) return true; }
+  return false;
+}
+function addFirmRecord(records, id, name, rows){
+  if(!rows || rows.length<MIN_N) return;
+  var res;
+  try{ res=analyzeRows(rows); }catch(e){ return; }
+  if(res.q.n<MIN_N) return;
+  records.push({ id:id, name:name, n:res.q.n, q:res.q, qc:res.qualCounts });
+}
+
 // マスターフォルダ配下の法人フォルダを走査し、法人ごとの集計値（レコード）を作る。
 // Driveスキャンが必要な唯一の重い処理。除外は名前ベースのものだけをここで適用し、
 // 「特定の1法人を除外」は軽量な aggregateFirmRecords 側で行う（都度Driveを再走査しないため）。
@@ -153,15 +165,30 @@ function computeFirmRecords(){
   while(subs.hasNext()){
     var sub=subs.next();
     var name=sub.getName();
-    var skip=false; for(var i=0;i<excludeNames.length;i++){ if(excludeNames[i] && name.indexOf(excludeNames[i])>=0){ skip=true; break; } }
-    if(skip) continue;
-    var rows;
-    try{ rows=findResponseRowsInFolder(sub); }catch(e){ rows=null; }
-    if(!rows || rows.length<MIN_N) continue;
-    var res;
-    try{ res=analyzeRows(rows); }catch(e){ continue; }
-    if(res.q.n<MIN_N) continue;
-    records.push({ id:sub.getId(), name:name, n:res.q.n, q:res.q, qc:res.qualCounts });
+    if(isExcludedName(name, excludeNames)) continue;
+
+    // 通常の1法人フォルダ：このフォルダ自身に回答シートが直接ある場合
+    var directRows=null;
+    try{ directRows=findResponseRowsInFolder2(sub); }catch(e){ directRows=null; }
+    if(directRows && directRows.length){ addFirmRecord(records, sub.getId(), name, directRows); continue; }
+
+    // このフォルダ自身に回答シートが無い場合、子フォルダを走査する。
+    // 「【支援終了】策定支援」のように、複数の法人フォルダをまとめて入れている
+    // 「入れ物」フォルダのケースがあるため、有効な回答を持つ子フォルダが2つ以上あれば
+    // それぞれを独立した法人として登録する（1つだけの場合は、従来通り単一法人の
+    // 年度別サブフォルダ構成とみなし、親フォルダの名前で1件登録する）。
+    var childHits=[];
+    var children=sub.getFolders();
+    while(children.hasNext()){
+      var child=children.next();
+      var cName=child.getName();
+      if(isExcludedName(cName, excludeNames)) continue;
+      var cRows=null;
+      try{ cRows=findResponseRowsInFolder(child); }catch(e2){ cRows=null; }
+      if(cRows && cRows.length) childHits.push({id:child.getId(), name:cName, rows:cRows});
+    }
+    if(childHits.length===1){ addFirmRecord(records, sub.getId(), name, childHits[0].rows); }
+    else if(childHits.length>1){ childHits.forEach(function(h){ addFirmRecord(records, h.id, h.name, h.rows); }); }
   }
   return records;
 }
